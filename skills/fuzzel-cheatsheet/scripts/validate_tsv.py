@@ -9,7 +9,20 @@ Lines starting with '#' are comments (provenance); blank lines are ignored.
 import argparse
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
+
+# audit_versions.sh reads exactly these two shapes. A line that looks close
+# enough to a human but does not parse leaves the sheet unauditable forever,
+# so a malformed comment is an error rather than a warning.
+SOURCE_RE = re.compile(r"^\s*#\s*source\s*:\s*(\S+)\s+(\d+(?:\.\d+)+)\s*/\s*(\S.*)$", re.I)
+CONFIG_RE = re.compile(r"^\s*#\s*config\s*:\s*(\S.*?)\s*@\s*(\d{4}-\d{2}-\d{2})\s*$", re.I)
+SOURCE_FORM = "# source: <app> <version> / <where>"
+CONFIG_FORM = "# config: <path> @ <YYYY-MM-DD>"
+
+# Placeholders that are meaningful in a config file but useless in a cheatsheet:
+# the reader needs the chord they actually press.
+PLACEHOLDERS = ("<leader>", "<localleader>", "<prefix>", "$mainmod", "$mod", "mod4")
 
 
 def main() -> int:
@@ -23,16 +36,39 @@ def main() -> int:
         return 1
 
     errors: list[str] = []
+    warnings: list[str] = []
     entries = 0
     categories: set[str] = set()
-    has_provenance = False
+    has_source = False
+    has_config = False
+    seen: dict[tuple[str, str], int] = {}
+    key_categories: defaultdict[str, set[str]] = defaultdict(set)
 
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not raw.strip():
             continue
         if raw.lstrip().startswith("#"):
-            if re.match(r"\s*#\s*(source|version)\s*:", raw, re.IGNORECASE):
-                has_provenance = True
+            if re.match(r"\s*#\s*source\s*:", raw, re.IGNORECASE):
+                if SOURCE_RE.match(raw):
+                    has_source = True
+                else:
+                    errors.append(
+                        f"line {lineno}: provenance comment does not parse; "
+                        f"expected '{SOURCE_FORM}' with a bare dotted version: {raw!r}"
+                    )
+            elif re.match(r"\s*#\s*config\s*:", raw, re.IGNORECASE):
+                if CONFIG_RE.match(raw):
+                    has_config = True
+                else:
+                    errors.append(
+                        f"line {lineno}: config comment does not parse; "
+                        f"expected '{CONFIG_FORM}': {raw!r}"
+                    )
+            elif re.match(r"\s*#\s*version\s*:", raw, re.IGNORECASE):
+                errors.append(
+                    f"line {lineno}: '# version:' is not read by the staleness audit; "
+                    f"use '{SOURCE_FORM}': {raw!r}"
+                )
             continue
 
         fields = raw.split("\t")
@@ -42,6 +78,11 @@ def main() -> int:
                 f"(use real TABs, not spaces): {raw!r}"
             )
             continue
+        if len(fields) > 4:
+            warnings.append(
+                f"line {lineno}: {len(fields)} fields — everything past the 4th is "
+                f"dropped; a stray TAB in the description is the usual cause: {raw!r}"
+            )
 
         category, key, desc = fields[0].strip(), fields[1].strip(), fields[2].strip()
         if not key:
@@ -56,9 +97,38 @@ def main() -> int:
                 f"line {lineno}: no TAB separator found (did you use spaces?): {raw!r}"
             )
 
+        lowered = key.lower()
+        for placeholder in PLACEHOLDERS:
+            if placeholder in lowered:
+                warnings.append(
+                    f"line {lineno}: key contains the placeholder '{placeholder}' — "
+                    f"expand it to the chord actually configured: {key!r}"
+                )
+                break
+
         if key and desc and category:
+            # An overlaid custom binding that shadows a default lands here: two
+            # rows claim the same key, and only one of them is what the app does.
+            previous = seen.get((category, key))
+            if previous is not None:
+                errors.append(
+                    f"line {lineno}: duplicate key {key!r} in category {category!r} "
+                    f"(first seen on line {previous}) — the later binding usually "
+                    "wins; keep one row"
+                )
+            else:
+                seen[(category, key)] = lineno
+            key_categories[key].add(category)
             entries += 1
             categories.add(category)
+
+    for key, cats in sorted(key_categories.items()):
+        if len(cats) > 1:
+            warnings.append(
+                f"key {key!r} appears in {len(cats)} categories "
+                f"({', '.join(sorted(cats))}) — fine for different modes, "
+                "a conflict otherwise"
+            )
 
     if entries == 0:
         errors.append("no valid data entries found")
@@ -69,12 +139,19 @@ def main() -> int:
             print(f"  - {e}", file=sys.stderr)
         return 1
 
-    if not has_provenance:
-        print(
-            f"[WARN] {path}: no '# source:' or '# version:' provenance comment — "
-            "confirm data matches the installed app version.",
-            file=sys.stderr,
+    if not has_source:
+        warnings.append(
+            f"no '{SOURCE_FORM}' comment — freshness unconfirmed, and the sheet "
+            "stays UNKNOWN in the staleness audit"
         )
+    if not has_config:
+        warnings.append(
+            f"no '{CONFIG_FORM}' comment — a later rebind in the user's config "
+            "will never be flagged"
+        )
+
+    for w in warnings:
+        print(f"[WARN] {path}: {w}", file=sys.stderr)
 
     print(f"[OK] {path}: {entries} entries, {len(categories)} categor(y/ies).")
     return 0

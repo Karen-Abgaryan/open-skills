@@ -10,15 +10,33 @@
 #   tsv     schema + provenance, via scripts/validate_tsv.py
 #   syntax  bash -n on the menu script
 #   exec    menu script is executable
-#   deps    fuzzel and awk are on PATH
+#   deps    the picker the menu script actually uses, plus awk, are on PATH
 #   wiring  the menu script is bound in the WM config and the target exists
+#
+# Env:
+#   WM_CONF   window-manager config to check the binding in. Defaults to the
+#             first of the Hyprland/sway/i3/niri configs that exists.
+#             HYPR_CONF is still honoured for compatibility.
 #
 # Exit 0 when nothing failed; 1 otherwise. WARN never fails the run.
 
 set -uo pipefail
 
 SKILL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-HYPR_CONF="${HYPR_CONF:-$HOME/.config/hypr/keybindings.conf}"
+
+default_wm_conf() {
+    local c
+    for c in "$HOME/.config/hypr/keybindings.conf" \
+             "$HOME/.config/hypr/hyprland.conf" \
+             "$HOME/.config/sway/config" \
+             "$HOME/.config/i3/config" \
+             "$HOME/.config/niri/config.kdl"; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    printf '%s' "$HOME/.config/hypr/keybindings.conf"
+}
+
+WM_CONF="${WM_CONF:-${HYPR_CONF:-$(default_wm_conf)}}"
 
 TSV="${1:-}"
 MENU="${2:-}"
@@ -43,14 +61,17 @@ report() { # report <status> <name> <detail>
 if tsv_out="$(python3 "$SKILL_DIR/scripts/validate_tsv.py" "$TSV" 2>&1)"; then
     ok_line="$(printf '%s\n' "$tsv_out" | grep -F '[OK]' | head -1)"
     report OK tsv "${ok_line##*"$TSV": }"
-    case "$tsv_out" in
-        *"[WARN]"*) report WARN tsv "no '# source: <app> <version> / <where>' comment — freshness unconfirmed" ;;
-    esac
+    # Forward every warning the validator raised, not just the first kind.
+    while IFS= read -r warn_line; do
+        [ -n "$warn_line" ] || continue
+        report WARN tsv "${warn_line##*"$TSV": }"
+    done < <(printf '%s\n' "$tsv_out" | grep -F '[WARN]')
 else
     report FAIL tsv "$(printf '%s' "$tsv_out" | tr '\n' ' ')"
 fi
 
 # --- menu script -------------------------------------------------------------
+picker=""
 if [ -n "$MENU" ]; then
     menu_name="$(basename -- "$MENU")"
     if [ ! -f "$MENU" ]; then
@@ -66,17 +87,43 @@ if [ -n "$MENU" ]; then
     else
         report FAIL exec "$menu_name is not executable (chmod +x)"
     fi
+
+    # Check the picker the script actually calls: a rofi menu must not fail
+    # because fuzzel happens to be absent.
+    if [ -f "$MENU" ]; then
+        for candidate in fuzzel rofi wofi tofi bemenu dmenu; do
+            grep -qE "(^|[^-[:alnum:]])$candidate([^-[:alnum:]]|$)" "$MENU" &&
+                picker="${picker:+$picker }$candidate"
+        done
+    fi
 else
     report SKIP syntax "no menu script given — pass it once the script exists"
 fi
 
 # --- deps --------------------------------------------------------------------
+# With no menu script yet there is nothing to read the picker from, so fall back
+# to the skill's default.
+[ -n "$picker" ] || picker="fuzzel"
 missing=""
-for dep in fuzzel awk; do
-    command -v "$dep" >/dev/null 2>&1 || missing="$missing $dep"
+found=""
+for dep in $picker; do
+    if command -v "$dep" >/dev/null 2>&1; then
+        found="${found:+$found, }$dep"
+    else
+        missing="$missing $dep"
+    fi
 done
-if [ -z "$missing" ]; then
-    report OK deps "fuzzel, awk present"
+if command -v awk >/dev/null 2>&1; then
+    awk_present=1
+else
+    awk_present=0
+    missing="$missing awk"
+fi
+
+# A script may name several pickers because it selects one at runtime, so one
+# present picker plus awk is enough.
+if [ -n "$found" ] && [ "$awk_present" -eq 1 ]; then
+    report OK deps "present: $found, awk${missing:+ (absent:$missing)}"
 else
     report FAIL deps "not on PATH:$missing"
 fi
@@ -84,26 +131,34 @@ fi
 # --- wiring ------------------------------------------------------------------
 if [ -z "$MENU" ]; then
     report SKIP wiring "no menu script given"
-elif [ ! -f "$HYPR_CONF" ]; then
-    report SKIP wiring "$HYPR_CONF not present (non-Hyprland WM — verify the binding by hand)"
+elif [ ! -f "$WM_CONF" ]; then
+    report SKIP wiring "$WM_CONF not present — set WM_CONF, or verify the binding by hand"
 else
-    bind_line="$(grep -F "$(basename -- "$MENU")" "$HYPR_CONF" | grep -E '^\s*bindd?\s*=' | head -1)"
+    # Hyprland 'bind'/'bindd', sway/i3 'bindsym', niri 'spawn' inside a binds block.
+    bind_line="$(grep -F "$(basename -- "$MENU")" "$WM_CONF" |
+                 grep -E '(^|[^[:alnum:]])(bind[a-z]*|bindsym|spawn)([^[:alnum:]]|$)' | head -1)"
     if [ -z "$bind_line" ]; then
-        report FAIL wiring "no bind for $(basename -- "$MENU") in $HYPR_CONF"
+        report FAIL wiring "no binding for $(basename -- "$MENU") in $WM_CONF"
     else
-        # The bound path must resolve; $HOME/~ and $cs_path style vars are expanded.
-        target="${bind_line##*exec, }"
-        target="${target%%,*}"
+        # Take the token ending in the script name, so trailing arguments, quotes
+        # and commas elsewhere in the binding cannot corrupt the path.
+        esc_name="$(basename -- "$MENU" | sed 's/[.[\*^$]/\\&/g')"
+        target="$(grep -oE "[^ ,\"']*$esc_name" <<<"$bind_line" | head -1)"
         target="${target/#\~/$HOME}"
         target="${target//\$HOME/$HOME}"
         if [ -e "$target" ]; then
-            report OK wiring "$(cut -d, -f1-3 <<<"$bind_line" | tr -s ' ') -> existing script"
+            report OK wiring "$(tr -s ' ' <<<"$bind_line" | cut -c1-60) -> existing script"
         else
             report FAIL wiring "bound path does not exist: $target"
         fi
-        case "$bind_line" in
-            *bindd*) : ;;
-            *) report WARN wiring "uses 'bind' not 'bindd' — no description in the bindings HUD" ;;
+        # Hyprland only: 'bindd' carries the description shown in a bindings HUD.
+        case "$WM_CONF" in
+            *hypr*)
+                case "$bind_line" in
+                    *bindd*) : ;;
+                    *) report WARN wiring "uses 'bind' not 'bindd' — no description in the bindings HUD" ;;
+                esac
+                ;;
         esac
     fi
 fi

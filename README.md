@@ -10,13 +10,14 @@ Skills follow the [Agent Skills](https://agentskills.io/) format.
 
 ### fuzzel-cheatsheet
 
-Builds a fuzzy-searchable cheatsheet menu (fuzzel, rofi, dmenu) of an application's keys and commands, wired to a window-manager hotkey. Entries are grounded in the app's own binding dump or version-matched documentation, never written from memory, and each sheet records the version it was built from so staleness can be detected later.
+Builds a fuzzy-searchable cheatsheet menu (fuzzel, rofi, dmenu) of an application's keys and commands, wired to a window-manager hotkey. Entries are grounded in the app's own binding dump or version-matched documentation, never written from memory, and the user's custom keymaps are merged over upstream defaults. Each sheet records the app version and the config files it was built from, so both an upgrade and a later rebind can be detected as staleness.
 
 **Use when:**
 
 - Building a cheatsheet, hotkey reference, or shortcut lookup for an app
 - Turning a static cheatsheet image into a searchable menu
 - Wiring a searchable key reference to a keybinding
+- Making a reference that covers your own rebound keys, not just the defaults
 
 ### write-commit-msg
 
