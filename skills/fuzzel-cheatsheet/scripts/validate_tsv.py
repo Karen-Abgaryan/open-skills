@@ -24,6 +24,12 @@ CONFIG_FORM = "# config: <path> @ <YYYY-MM-DD>"
 # the reader needs the chord they actually press.
 PLACEHOLDERS = ("<leader>", "<localleader>", "<prefix>", "$mainmod", "$mod", "mod4")
 
+# A key still carrying a symbolic reference — a DTD entity, a shell expansion,
+# an unexpanded token — reads as a chord to the validator and as nonsense to the
+# user. The named PLACEHOLDERS above cover the forms seen so far; this catches
+# the shape.
+UNRESOLVED = re.compile(r"&[\w.-]+;|\$\{[^}]+\}|<[a-z][a-z-]*>")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate a cheatsheet TSV.")
@@ -105,6 +111,12 @@ def main() -> int:
                     f"expand it to the chord actually configured: {key!r}"
                 )
                 break
+
+        if UNRESOLVED.search(key):
+            errors.append(
+                f"line {lineno}: key '{key}' contains an unresolved reference — "
+                f"resolve it against the source's locale/config files before shipping"
+            )
 
         if key and desc and category:
             # An overlaid custom binding that shadows a default lands here: two
