@@ -16,6 +16,21 @@ Throughout, `<skill-dir>` is wherever this skill is installed (commonly
 `~/.claude/skills/draft-on-medium` or `~/.agents/skills/draft-on-medium`). Resolve
 it to an absolute path before running a bundled script.
 
+## Requirements
+
+The script depends on tools this skill does not ship, and two of them fail
+*silently* when absent:
+
+| Tool | Used for | When missing |
+| --- | --- | --- |
+| `python3` (stdlib only) | conversion, every artifact read | CONVERT FAILs loudly |
+| `magick` (ImageMagick 7) | image widths, cover thumbnail | the width check still prints `IMAGES PASS uniform width:` with an empty width list — never trust that PASS on a host without `magick` |
+| `curl` + network | link and Medium reachability checks | reported as `SKIP no network`, indistinguishable from a down network — check the tool, not just the line |
+
+Beyond the script, the run needs a Playwright MCP browser (every editor step)
+and a vision tool or subagent for the two MANUAL image checks. A missing
+browser or vision capability stops the run; it does not degrade it.
+
 ## Hard rules
 
 - **Never click Publish.** The deliverable is a draft. Medium's top-bar Publish
