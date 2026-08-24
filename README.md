@@ -19,6 +19,8 @@ Builds a fuzzy-searchable cheatsheet menu (fuzzel, rofi, dmenu) of an applicatio
 - Wiring a searchable key reference to a keybinding
 - Making a reference that covers your own rebound keys, not just the defaults
 
+Background — the problem this skill solves, and why a searchable sheet beats a cheatsheet image: [I Had 500 Keyboard Shortcuts. I Was Using 15.](https://medium.com/@karen.abgaryan/i-had-500-keyboard-shortcuts-i-was-using-15-f53f74d02768)
+
 ### write-commit-msg
 
 Drafts a commit message for currently-staged Git changes in a Conventional-Commits-inspired house style: past tense, passive voice, a short headline summary over a brief narrative description. Drafts the message text only — it never runs `git commit`.
