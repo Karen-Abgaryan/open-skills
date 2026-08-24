@@ -51,9 +51,9 @@ bash <skill-dir>/scripts/validate.sh <file.tsv> <menu-script.sh>   # after step 
 | --- | --- |
 | `tsv` | wrong column count, empty/whitespace-only category, key or description, non-tab-separated rows, a duplicate key inside one category, a malformed `# source:`/`# config:` comment (`validate_tsv.py` does the work). Warns on a missing provenance comment, an unexpanded `<leader>`/`<prefix>`/`$mainMod`, a stray 5th field, and a key repeated across categories |
 | `syntax` | the menu script is missing or `bash -n` rejects it |
-| `exec` | the menu script has no exec bit |
 | `deps` | none of the pickers named in the menu script is on PATH, or `awk` is missing |
 | `wiring` | no binding for the script in `$WM_CONF`, or the bound path does not exist. Warns on Hyprland `bind` instead of `bindd` |
+| `exec` | the menu script has no exec bit *and* the binding runs it directly. A binding of the form `bash <path>` passes without one; with no binding to read, the check reports `SKIP` rather than guessing |
 
 A check with no input prints `SKIP` rather than passing quietly, so a partial run never reads as a clean one. Exit 1 means at least one `FAIL`; fix and re-run before shipping.
 
@@ -73,6 +73,8 @@ A check with no input prints `SKIP` rather than passing quietly, so a partial ru
 
 Menu line format is fixed: `key - description   (Category)` — searchable by key, action, or category.
 
+The copy needs no exec bit: every invocation goes through `bash <path>`, both from the shell and from the hotkey (section 6). That keeps the build clear of `chmod +x`, which an agent is often not permitted to run on a file it has just written.
+
 **Specialize the script to the installed picker, at build time.** Resolve which picker is present and what version it is (`fuzzel --version`, `rofi -version`, `wofi --version`), then write a script that calls that one picker with the flags that build actually supports. No runtime picker dispatch, no capability probing, no fallback branches: the machine's picker does not change between invocations, so a branch for a picker that is not installed is dead code that nobody will ever notice is wrong.
 
 | Picker | Flags | Column matching |
@@ -90,7 +92,7 @@ Confirm the flags against the installed build's `--help` rather than this table 
 By default the query matches the whole rendered line, so typing `w` also hits every description containing a w. Feeding the picker two columns — the rendered line, then the bare key — makes a key-only search possible:
 
 ```bash
-MODE=keys ~/.local/bin/vifm-cheatsheet.sh
+MODE=keys bash ~/.local/bin/vifm-cheatsheet.sh
 ```
 
 With fuzzel this is `--with-nth=1 --match-nth=2`: the full line is displayed, matching happens against the key alone. Only fuzzel ≥ 1.14 can do it; for any other picker, drop `MODE` from the script entirely rather than accepting a silent fall back to full-line matching.
@@ -104,11 +106,13 @@ Worth a second hotkey when an app has many keys sharing a description vocabulary
 
 ## 6. Hotkey wiring
 
+Bind the script through `bash`, never as a bare path: the exec bit then stops mattering, so a script written moments earlier fires on the first press without a `chmod +x` the environment may refuse.
+
 **Hyprland** — bind the script, ideally inside a dedicated cheatsheet submap:
 
 ```
-bindd = , F, Vifm cheat sheet, exec, ~/.local/bin/vifm-cheatsheet.sh
-bindd = ALT, F, Vifm cheat sheet by key, exec, MODE=keys ~/.local/bin/vifm-cheatsheet.sh
+bindd = , F, Vifm cheat sheet, exec, bash ~/.local/bin/vifm-cheatsheet.sh
+bindd = ALT, F, Vifm cheat sheet by key, exec, MODE=keys bash ~/.local/bin/vifm-cheatsheet.sh
 bindd = SHIFT, F, Vifm cheat sheet image, exec, feh $cs_path/vifm-v0.14-builtin-normal.png
 ```
 
@@ -117,9 +121,9 @@ bindd = SHIFT, F, Vifm cheat sheet image, exec, feh $cs_path/vifm-v0.14-builtin-
 - `$cs_path` is a variable defined at the top of the config, pointing at wherever cheatsheet images live. `validate.sh` expands `~` and `$HOME` in a bound path but not config-local variables like this one, so an image bind is not checked for you.
 - Reload after editing: `hyprctl reload` (must report `ok`).
 
-**i3 / sway** — `bindsym <key> exec ~/.local/bin/<app>-cheatsheet.sh`; reload with `swaymsg reload` / `i3-msg reload`.
+**i3 / sway** — `bindsym <key> exec bash ~/.local/bin/<app>-cheatsheet.sh`; reload with `swaymsg reload` / `i3-msg reload`.
 
-**niri** — inside the `binds` block: `Mod+Shift+F { spawn "~/.local/bin/<app>-cheatsheet.sh"; }`.
+**niri** — inside the `binds` block: `Mod+Shift+F { spawn "bash" "/home/<user>/.local/bin/<app>-cheatsheet.sh"; }`. niri spawns the program without a shell, so each argument is separate and the path is absolute — a leading `~` reaches `bash` as a literal filename and the binding silently does nothing.
 
 On any of these, the menu script is the one written for the picker installed on that machine (section 3); the wiring itself is the same whichever picker it calls.
 

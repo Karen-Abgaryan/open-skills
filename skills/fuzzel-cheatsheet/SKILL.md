@@ -41,8 +41,8 @@ A launcher hotkey (Hyprland submap by default) that opens a `fuzzel --dmenu` fuz
    ```bash
    bash <skill-dir>/scripts/validate.sh <file.tsv>
    ```
-7. **Build the menu** — copy `scripts/make_cheatsheet.sh`, point `DATA` at the TSV, and specialize it per rule 6 to the picker actually installed.
-8. **Wire the hotkey** — bind the menu script in the window manager's config, keeping any static image on `Shift+<key>` as a visual fallback. See `references/menu-and-wiring.md`.
+7. **Build the menu** — copy `scripts/make_cheatsheet.sh`, point `DATA` at the TSV, and specialize it per rule 6 to the picker actually installed. Leave the exec bit alone: step 8 binds the hotkey as `bash <path>`, so the script never needs `chmod +x` — a permission the environment frequently refuses on a file just written, which would otherwise leave the hotkey dead until the user runs the command by hand.
+8. **Wire the hotkey** — bind the menu script as `bash <absolute path>` in the window manager's config, keeping any static image on `Shift+<key>` as a visual fallback. See `references/menu-and-wiring.md`.
 9. **Validate everything** — same wrapper, now with the menu script, then reload the WM config (Hyprland: `hyprctl reload`, must report `ok`) and test the hotkey:
    ```bash
    bash <skill-dir>/scripts/validate.sh <file.tsv> <menu-script.sh>
@@ -81,7 +81,7 @@ A task running normally opens nothing — these are looked up only when the situ
 
 Invoke with `bash <path>` (no exec bit needed); resolve `<skill-dir>` to an absolute path first.
 
-- `scripts/validate.sh <file.tsv> [menu-script.sh]` — the single validation entry point. Runs five checks: TSV schema (delegating to `validate_tsv.py`), `bash -n` on the menu script, its exec bit, the picker that script actually calls plus `awk` on PATH, and that the WM binding exists and points at a real file. A check whose input is missing prints `SKIP`, never a silent pass; exits 1 if anything `FAIL`s. `WM_CONF` defaults to the first Hyprland/sway/i3/niri config present; point it at the config in use otherwise.
+- `scripts/validate.sh <file.tsv> [menu-script.sh]` — the single validation entry point. Runs five checks: TSV schema (delegating to `validate_tsv.py`), `bash -n` on the menu script, the picker that script actually calls plus `awk` on PATH, that the WM binding exists and points at a real file, and the exec bit — required only when that binding runs the script directly rather than through `bash`. A check whose input is missing prints `SKIP`, never a silent pass; exits 1 if anything `FAIL`s. `WM_CONF` defaults to the first Hyprland/sway/i3/niri config present; point it at the config in use otherwise.
 - `scripts/audit_versions.sh [extra.tsv ...]` — the wrap-up audit. Scans `~/.config/*/cheatsheet.tsv` (override with `CHEATSHEET_GLOB`), resolves each app's installed version via `--version`/`-v`/package manager, compares each recorded config's mtime, prints the status table. Advisory: always exits 0.
 - `scripts/make_cheatsheet.sh` — the reference-only menu template in its fuzzel form (env: `DATA`, `PROMPT`, `WIDTH`, `LINES`, `MODE`). Copy, rename per app, and specialize to the installed picker; `references/menu-and-wiring.md` carries the flag set and minimum version per picker. `MODE=keys` restricts matching to the key column (fuzzel ≥ 1.14).
 - `scripts/validate_tsv.py` — the schema engine behind `validate.sh`. Call it directly only when debugging the validator itself.

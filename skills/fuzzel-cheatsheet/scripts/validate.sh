@@ -9,9 +9,10 @@
 # Checks (a check whose input is absent is skipped, never silently dropped):
 #   tsv     schema + provenance, via scripts/validate_tsv.py
 #   syntax  bash -n on the menu script
-#   exec    menu script is executable
 #   deps    the picker the menu script actually uses, plus awk, are on PATH
 #   wiring  the menu script is bound in the WM config and the target exists
+#   exec    menu script is executable — only required when the binding runs it
+#           directly; `bash <path>` in the binding makes the exec bit irrelevant
 #
 # Env:
 #   WM_CONF   window-manager config to check the binding in. Defaults to the
@@ -82,12 +83,6 @@ if [ -n "$MENU" ]; then
         report FAIL syntax "$(bash -n "$MENU" 2>&1 | tr '\n' ' ')"
     fi
 
-    if [ -x "$MENU" ]; then
-        report OK exec "$menu_name is executable"
-    else
-        report FAIL exec "$menu_name is not executable (chmod +x)"
-    fi
-
     # Check the picker the script actually calls: a rofi menu must not fail
     # because fuzzel happens to be absent.
     if [ -f "$MENU" ]; then
@@ -129,6 +124,8 @@ else
 fi
 
 # --- wiring ------------------------------------------------------------------
+# How the binding starts the script decides whether the exec bit matters below.
+bind_mode="unknown"
 if [ -z "$MENU" ]; then
     report SKIP wiring "no menu script given"
 elif [ ! -f "$WM_CONF" ]; then
@@ -146,6 +143,13 @@ else
         target="$(grep -oE "[^ ,\"']*$esc_name" <<<"$bind_line" | head -1)"
         target="${target/#\~/$HOME}"
         target="${target//\$HOME/$HOME}"
+        # An interpreter in front of the path (`exec, bash ~/…/x.sh`, niri's
+        # `spawn "bash" "…"`) opens the file itself, so no exec bit is needed.
+        if grep -qE "(^|[^-[:alnum:]])(bash|sh|zsh)[[:space:]\"',]+[^ ,\"']*$esc_name" <<<"$bind_line"; then
+            bind_mode="interpreter"
+        else
+            bind_mode="direct"
+        fi
         if [ -e "$target" ]; then
             report OK wiring "$(tr -s ' ' <<<"$bind_line" | cut -c1-60) -> existing script"
         else
@@ -160,6 +164,20 @@ else
                 esac
                 ;;
         esac
+    fi
+fi
+
+# --- exec --------------------------------------------------------------------
+# Runs after wiring because only the binding says whether the bit is needed.
+if [ -n "$MENU" ] && [ -f "$MENU" ]; then
+    if [ -x "$MENU" ]; then
+        report OK exec "$menu_name is executable"
+    elif [ "$bind_mode" = "interpreter" ]; then
+        report OK exec "$menu_name has no exec bit — the binding runs it via an interpreter"
+    elif [ "$bind_mode" = "direct" ]; then
+        report FAIL exec "$menu_name is not executable and the binding runs it directly (chmod +x $MENU, or bind it as 'bash $MENU')"
+    else
+        report SKIP exec "$menu_name has no exec bit and no binding was read — needed only if the hotkey runs it directly"
     fi
 fi
 
