@@ -58,6 +58,9 @@ AI_PATTERNS = (
     re.compile(r"\bcoding\s+agent\b", re.I),
 )
 
+# Agent instruction files are named after their tool; naming one is not attribution.
+INSTRUCTION_FILES = re.compile(r"\b(?:CLAUDE|GEMINI)(?:\.local)?\.md\b|\bcopilot-instructions\.md\b|\.cursorrules\b", re.I)
+
 
 def word_count(text: str) -> int:
     return len(text.split())
@@ -170,7 +173,7 @@ def validate(msg: str, summary_max: int, body_max: int) -> List[Dict[str, str]]:
                 })
 
     for pat in AI_PATTERNS:
-        m = pat.search(msg)
+        m = pat.search(INSTRUCTION_FILES.sub("", msg))
         if m:
             errors.append({
                 "code": "ai_attribution",
